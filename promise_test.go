@@ -1,7 +1,9 @@
 package promise
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -211,5 +213,120 @@ func TestDoubleRejectFromExecutor(t *testing.T) {
 		t.Logf("exp: %v", expectedError)
 		t.Logf("got: %v", err)
 		t.Errorf("unexpected error")
+	}
+}
+
+func TestWhenAllOk(t *testing.T) {
+	expexted := []interface{}{
+		"hello",
+		"world",
+	}
+	p1 := New(func() (interface{}, error) {
+		time.Sleep(100 * time.Millisecond)
+		return "hello", nil
+	})
+	p2 := New(func() (interface{}, error) {
+		time.Sleep(200 * time.Millisecond)
+		return "world", nil
+	})
+
+	res, err := WhenAll(p1, p2).Result()
+	if err != nil {
+		t.Fatalf("unexpected error: %[1]v (%[1]T)", err)
+	}
+
+	s1, _ := json.Marshal(expexted)
+	s2, _ := json.Marshal(res)
+	if !bytes.Equal(s1, s2) {
+		t.Logf("exp: %s", s1)
+		t.Logf("got: %s", s2)
+		t.Errorf("unexpected result")
+	}
+}
+
+func TestWhenAllErr(t *testing.T) {
+	p1 := New(func() (interface{}, error) {
+		time.Sleep(100 * time.Millisecond)
+		return "", expectedError
+	})
+	p2 := New(func() (interface{}, error) {
+		time.Sleep(200 * time.Millisecond)
+		return "world", nil
+	})
+
+	_, err := WhenAll(p1, p2).Result()
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if expectedError != err {
+		t.Logf("exp: %v", expectedError)
+		t.Logf("got: %v", err)
+		t.Errorf("unexpected error")
+	}
+}
+
+func TestWhenAnyOk(t *testing.T) {
+	expexted := "hello"
+	p1 := New(func() (interface{}, error) {
+		time.Sleep(100 * time.Millisecond)
+		return "", expectedError
+	})
+	p2 := New(func() (interface{}, error) {
+		time.Sleep(200 * time.Millisecond)
+		return expexted, nil
+	})
+
+	res, err := WhenAny(p1, p2).Result()
+	if err != nil {
+		t.Fatalf("unexpected error: %[1]v (%[1]T)", err)
+	}
+
+	s1, _ := json.Marshal(expexted)
+	s2, _ := json.Marshal(res)
+	if !bytes.Equal(s1, s2) {
+		t.Logf("exp: %s", s1)
+		t.Logf("got: %s", s2)
+		t.Errorf("unexpected result")
+	}
+}
+
+func TestWhenAnyErr(t *testing.T) {
+	p1 := New(func() (interface{}, error) {
+		time.Sleep(100 * time.Millisecond)
+		return "", errors.New("unexpected error")
+	})
+	p2 := New(func() (interface{}, error) {
+		time.Sleep(200 * time.Millisecond)
+		return "", expectedError
+	})
+
+	_, err := WhenAny(p1, p2).Result()
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if expectedError != err {
+		t.Logf("exp: %v", expectedError)
+		t.Logf("got: %v", err)
+		t.Errorf("unexpected error")
+	}
+}
+
+func TestCancelAll(t *testing.T) {
+	l := make([]*Promise, 5)
+	for i := range l {
+		l[i] = New(func() (interface{}, error) {
+			time.Sleep(time.Second)
+			return "", errors.New("unexpected error")
+		})
+	}
+
+	CancelAll(l...)
+
+	for i := range l {
+		if _, err := l[i].Result(); err != context.Canceled {
+			t.Logf("exp: %T", context.Canceled)
+			t.Logf("got: %T", err)
+			t.Error("unexpected error type on cancel")
+		}
 	}
 }
