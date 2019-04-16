@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var expectedError = errors.New("some error")
+var errExpected = errors.New("some error")
 
 func TestPromiseCallbacks(t *testing.T) {
 	var tt = []struct {
@@ -28,8 +28,8 @@ func TestPromiseCallbacks(t *testing.T) {
 		},
 		{
 			Name:          "failure",
-			Fn:            func() (interface{}, error) { return nil, expectedError },
-			ExpectedError: expectedError,
+			Fn:            func() (interface{}, error) { return nil, errExpected },
+			ExpectedError: errExpected,
 			ExpectOnError: true,
 		},
 	}
@@ -199,7 +199,7 @@ func TestDoubleRejectFromExecutor(t *testing.T) {
 	unexpectedError := errors.New("unexpected error")
 
 	ex := AsyncExecutorFunc(func(pr *Promise) {
-		pr.Reject(expectedError)
+		pr.Reject(errExpected)
 		pr.Reject(unexpectedError)
 	})
 
@@ -209,8 +209,8 @@ func TestDoubleRejectFromExecutor(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if expectedError != err {
-		t.Logf("exp: %v", expectedError)
+	if errExpected != err {
+		t.Logf("exp: %v", errExpected)
 		t.Logf("got: %v", err)
 		t.Errorf("unexpected error")
 	}
@@ -247,7 +247,7 @@ func TestWhenAllOk(t *testing.T) {
 func TestWhenAllErr(t *testing.T) {
 	p1 := New(func() (interface{}, error) {
 		time.Sleep(100 * time.Millisecond)
-		return "", expectedError
+		return "", errExpected
 	})
 	p2 := New(func() (interface{}, error) {
 		time.Sleep(200 * time.Millisecond)
@@ -258,8 +258,8 @@ func TestWhenAllErr(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if expectedError != err {
-		t.Logf("exp: %v", expectedError)
+	if errExpected != err {
+		t.Logf("exp: %v", errExpected)
 		t.Logf("got: %v", err)
 		t.Errorf("unexpected error")
 	}
@@ -269,7 +269,7 @@ func TestWhenAnyOk(t *testing.T) {
 	expexted := "hello"
 	p1 := New(func() (interface{}, error) {
 		time.Sleep(100 * time.Millisecond)
-		return "", expectedError
+		return "", errExpected
 	})
 	p2 := New(func() (interface{}, error) {
 		time.Sleep(200 * time.Millisecond)
@@ -297,15 +297,15 @@ func TestWhenAnyErr(t *testing.T) {
 	})
 	p2 := New(func() (interface{}, error) {
 		time.Sleep(200 * time.Millisecond)
-		return "", expectedError
+		return "", errExpected
 	})
 
 	_, err := WhenAny(p1, p2).Result()
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if expectedError != err {
-		t.Logf("exp: %v", expectedError)
+	if errExpected != err {
+		t.Logf("exp: %v", errExpected)
 		t.Logf("got: %v", err)
 		t.Errorf("unexpected error")
 	}
