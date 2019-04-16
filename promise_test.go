@@ -14,7 +14,7 @@ var errExpected = errors.New("some error")
 func TestPromiseCallbacks(t *testing.T) {
 	var tt = []struct {
 		Name            string
-		Fn              Function
+		Fn              PromiseFunc
 		ExpectedValue   string
 		ExpectedError   error
 		ExpectOnSuccess bool
@@ -38,7 +38,7 @@ func TestPromiseCallbacks(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			var onSuccessCalled, onErrorCalled, onDoneCalled bool
 
-			p := New(
+			p := Execution(
 				tc.Fn,
 				OnSuccess(func(v interface{}) {
 					onSuccessCalled = true
@@ -93,7 +93,7 @@ func TestPromiseCallbacks(t *testing.T) {
 }
 
 func TestPromiseCancelation(t *testing.T) {
-	pr := New(func() (interface{}, error) {
+	pr := Execution(func() (interface{}, error) {
 		time.Sleep(time.Second)
 		return nil, nil
 	})
@@ -107,7 +107,7 @@ func TestPromiseCancelation(t *testing.T) {
 
 func TestPromiseResultWithContext(t *testing.T) {
 	expectedValue := "hello world"
-	pr := New(func() (interface{}, error) {
+	pr := Execution(func() (interface{}, error) {
 		time.Sleep(100 * time.Millisecond)
 		return expectedValue, nil
 	})
@@ -135,7 +135,7 @@ func TestPromiseResultWithContext(t *testing.T) {
 
 func TestPromiseResultWithContextContinueExecutionIfContextCanceled(t *testing.T) {
 	expectedValue := "hello world"
-	pr := New(func() (interface{}, error) {
+	pr := Execution(func() (interface{}, error) {
 		time.Sleep(200 * time.Millisecond)
 		return expectedValue, nil
 	})
@@ -171,12 +171,16 @@ func TestDoubleResolveFromExecutor(t *testing.T) {
 	expectedValue := "hello alice"
 	unexpectedValue := "hello bob"
 
-	ex := AsyncExecutorFunc(func(pr *Promise) {
-		pr.Resolve(expectedValue)
-		pr.Resolve(unexpectedValue)
+	ex := AsyncExecutorFunc(func(fn PromiseFunc, cb []Callback) *Promise {
+		pr := New(cb...)
+		go func() {
+			pr.Resolve(expectedValue)
+			pr.Resolve(unexpectedValue)
+		}()
+		return pr
 	})
 
-	pr := WithExecutor(ex, func() (interface{}, error) { return nil, nil })
+	pr := ex.PromiseAsyncExecution(func() (interface{}, error) { return nil, nil })
 	v, err := pr.Result()
 	if err != nil {
 		t.Fatalf("unexpected error: %[1]v (%[1]T)", err)
@@ -198,12 +202,16 @@ func TestDoubleResolveFromExecutor(t *testing.T) {
 func TestDoubleRejectFromExecutor(t *testing.T) {
 	unexpectedError := errors.New("unexpected error")
 
-	ex := AsyncExecutorFunc(func(pr *Promise) {
-		pr.Reject(errExpected)
-		pr.Reject(unexpectedError)
+	ex := AsyncExecutorFunc(func(fn PromiseFunc, cb []Callback) *Promise {
+		pr := New(cb...)
+		go func() {
+			pr.Reject(errExpected)
+			pr.Reject(unexpectedError)
+		}()
+		return pr
 	})
 
-	pr := WithExecutor(ex, func() (interface{}, error) { return nil, nil })
+	pr := ex.PromiseAsyncExecution(func() (interface{}, error) { return nil, nil })
 
 	_, err := pr.Result()
 	if err == nil {
@@ -221,11 +229,11 @@ func TestWhenAllOk(t *testing.T) {
 		"hello",
 		"world",
 	}
-	p1 := New(func() (interface{}, error) {
+	p1 := Execution(func() (interface{}, error) {
 		time.Sleep(100 * time.Millisecond)
 		return "hello", nil
 	})
-	p2 := New(func() (interface{}, error) {
+	p2 := Execution(func() (interface{}, error) {
 		time.Sleep(200 * time.Millisecond)
 		return "world", nil
 	})
@@ -245,11 +253,11 @@ func TestWhenAllOk(t *testing.T) {
 }
 
 func TestWhenAllErr(t *testing.T) {
-	p1 := New(func() (interface{}, error) {
+	p1 := Execution(func() (interface{}, error) {
 		time.Sleep(100 * time.Millisecond)
 		return "", errExpected
 	})
-	p2 := New(func() (interface{}, error) {
+	p2 := Execution(func() (interface{}, error) {
 		time.Sleep(200 * time.Millisecond)
 		return "world", nil
 	})
@@ -267,11 +275,11 @@ func TestWhenAllErr(t *testing.T) {
 
 func TestWhenAnyOk(t *testing.T) {
 	expexted := "hello"
-	p1 := New(func() (interface{}, error) {
+	p1 := Execution(func() (interface{}, error) {
 		time.Sleep(100 * time.Millisecond)
 		return "", errExpected
 	})
-	p2 := New(func() (interface{}, error) {
+	p2 := Execution(func() (interface{}, error) {
 		time.Sleep(200 * time.Millisecond)
 		return expexted, nil
 	})
@@ -291,11 +299,11 @@ func TestWhenAnyOk(t *testing.T) {
 }
 
 func TestWhenAnyErr(t *testing.T) {
-	p1 := New(func() (interface{}, error) {
+	p1 := Execution(func() (interface{}, error) {
 		time.Sleep(100 * time.Millisecond)
 		return "", errors.New("unexpected error")
 	})
-	p2 := New(func() (interface{}, error) {
+	p2 := Execution(func() (interface{}, error) {
 		time.Sleep(200 * time.Millisecond)
 		return "", errExpected
 	})
@@ -314,7 +322,7 @@ func TestWhenAnyErr(t *testing.T) {
 func TestCancelAll(t *testing.T) {
 	l := make([]*Promise, 5)
 	for i := range l {
-		l[i] = New(func() (interface{}, error) {
+		l[i] = Execution(func() (interface{}, error) {
 			time.Sleep(time.Second)
 			return "", errors.New("unexpected error")
 		})

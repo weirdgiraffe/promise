@@ -2,13 +2,8 @@ package promise
 
 import "context"
 
-// Function is the function which could be wraped to promise
-type Function func() (result interface{}, err error)
-
 // Promise structure which defines a promise
 type Promise struct {
-	fn       Function
-	async    AsyncExecutor
 	callback []Callback
 
 	done chan struct{}
@@ -16,21 +11,19 @@ type Promise struct {
 	err  error
 }
 
-// New intializes and runs the promise for function fn with callbacks. This promise will be ran on DefaultExecutor
-func New(fn Function, callback ...Callback) *Promise {
-	return WithExecutor(DefaultExecutor, fn, callback...)
+type PromiseFunc func() (interface{}, error)
+
+// Function creates a promise for function execution
+func Execution(fn PromiseFunc, cb ...Callback) *Promise {
+	return DefaultExecutor.PromiseAsyncExecution(fn, cb...)
 }
 
-// WithExecutor run promise on custom AsyncExecutor, see New
-func WithExecutor(exec AsyncExecutor, fn Function, callback ...Callback) *Promise {
-	pr := &Promise{
-		fn:       fn,
-		callback: callback,
-		async:    exec,
+// New intializes and runs the promise for function fn with callbacks. This promise will be ran on DefaultExecutor
+func New(cb ...Callback) *Promise {
+	return &Promise{
+		callback: cb,
 		done:     make(chan struct{}),
 	}
-	pr.async.ExecAsync(pr)
-	return pr
 }
 
 // Done chanel which will be close if promise is either resolved or rejected
@@ -122,45 +115,36 @@ func (fn OnError) PromiseCallback(res interface{}, err error) {
 // AsyncExecutor is an interface you should implement if you want to define
 // a custom promises executor
 type AsyncExecutor interface {
-	// ExecAsync must execute p asynchronously and must not block
-	ExecAsync(p *Promise)
+	PromiseAsyncExecution(fn PromiseFunc, cb ...Callback) *Promise
 }
 
 // AsyncExecutorFunc is a function pattern applied on top of AsyncExecutor
-type AsyncExecutorFunc func(p *Promise)
+type AsyncExecutorFunc func(PromiseFunc, []Callback) *Promise
 
 // ExecAsync implements AsyncExecutor interface
-func (fn AsyncExecutorFunc) ExecAsync(pr *Promise) {
-	fn(pr)
-}
-
-// ExecFn calls the function wrapped in promise
-func (pr *Promise) ExecFn() (interface{}, error) {
-	select {
-	case <-pr.Done():
-		return pr.res, pr.err
-	default:
-		return pr.fn()
-	}
+func (fn AsyncExecutorFunc) PromiseAsyncExecution(promiseFn PromiseFunc, cb ...Callback) *Promise {
+	return fn(promiseFn, cb)
 }
 
 // DefaultExecutor executes each promise in a separate go routine
-var DefaultExecutor = AsyncExecutorFunc(func(pr *Promise) {
+var DefaultExecutor = AsyncExecutorFunc(func(fn PromiseFunc, cb []Callback) *Promise {
+	pr := New(cb...)
 	go func() {
-		res, err := pr.ExecFn()
+		res, err := fn()
 		if err != nil {
 			pr.Reject(err)
 			return
 		}
 		pr.Resolve(res)
 	}()
+	return pr
 })
 
 // WhenAll return the list of promises results corresponding to the promises list p
 // if any promise in p failes - fails with that error.
 // NOTE: This function doesn't cancel rest of the promises in p on error.
 func WhenAll(p ...*Promise) *Promise {
-	np := New(func() (interface{}, error) {
+	np := Execution(func() (interface{}, error) {
 		l := make([]interface{}, len(p))
 		for i := range p {
 			res, err := p[i].Result()
@@ -178,7 +162,7 @@ func WhenAll(p ...*Promise) *Promise {
 // WhenAny return the first result for the list op promises p. If all promises in
 // the promises list p were failed - returns the error of last failed promise.
 func WhenAny(p ...*Promise) *Promise {
-	np := New(func() (interface{}, error) {
+	np := Execution(func() (interface{}, error) {
 		var res interface{}
 		var err error
 		for i := range p {
