@@ -1,189 +1,131 @@
 package promise
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 )
 
-var errExpected = errors.New("some error")
+func TestPromiseIsNotDoneAfterCreation(t *testing.T) {
+	p := New()
 
-func TestPromiseCallbacks(t *testing.T) {
-	var tt = []struct {
-		Name            string
-		Fn              PromiseFunc
-		ExpectedValue   string
-		ExpectedError   error
-		ExpectOnSuccess bool
-		ExpectOnError   bool
-	}{
-		{
-			Name:            "success",
-			Fn:              func() (interface{}, error) { return "hello world", nil },
-			ExpectedValue:   "hello world",
-			ExpectOnSuccess: true,
-		},
-		{
-			Name:          "failure",
-			Fn:            func() (interface{}, error) { return nil, errExpected },
-			ExpectedError: errExpected,
-			ExpectOnError: true,
-		},
+	select {
+	case <-p.Done():
+		t.Fatalf("promise is done before being resolved or rejected")
+	default:
 	}
+}
 
-	for _, tc := range tt {
-		t.Run(tc.Name, func(t *testing.T) {
-			var onSuccessCalled, onErrorCalled, onDoneCalled bool
+func TestPromiseCouldBeResolved(t *testing.T) {
+	expected := "hello world"
 
-			p := Execution(
-				tc.Fn,
-				OnSuccess(func(v interface{}) {
-					onSuccessCalled = true
-					if !tc.ExpectOnSuccess {
-						t.Fatalf("unexpected OnSuccess callback with value %v", v)
-					}
-					s, ok := v.(string)
-					if !ok {
-						t.Logf("exp: string")
-						t.Logf("got: %T", v)
-						t.Fatalf("unexpected value type")
-					}
-					if tc.ExpectedValue != s {
-						t.Logf("exp: %s", tc.ExpectedValue)
-						t.Logf("got: %s", s)
-						t.Errorf("unexpected value")
-					}
-				}),
-				OnError(func(err error) {
-					onErrorCalled = true
-					if !tc.ExpectOnError {
-						t.Fatalf("unexpected OnError callback with error %v", err)
-					}
-					if tc.ExpectedError != err {
-						t.Logf("exp: %v", tc.ExpectedError)
-						t.Logf("got: %v", err)
-						t.Errorf("unexpected error")
-					}
-				}),
-				OnDone(func() {
-					onDoneCalled = true
-				}),
-			)
+	p := New()
+	p.Resolve(expected)
 
-			select {
-			case <-time.After(time.Second):
-				t.Fatal("promise was not done within a second")
-			case <-p.Done():
-			}
+	select {
+	case <-p.Done():
+		v, err := p.Result()
+		if err != nil {
+			t.Fatalf("expected nil, got error %[1]v (%[1]T)", err)
+		}
+		if v.(string) != expected {
+			t.Logf("exp: %s", expected)
+			t.Logf("got: %s", v.(string))
+			t.Fatalf("unexpected result")
+		}
+	default:
+		t.Fatalf("promise is not done after being resolved")
+	}
+}
 
-			if tc.ExpectOnSuccess && !onSuccessCalled {
-				t.Errorf("OnSuccess callback was not being called")
-			}
-			if tc.ExpectOnError && !onErrorCalled {
-				t.Errorf("OnError callback was not being called")
-			}
-			if !onDoneCalled {
-				t.Errorf("OnDone callback was not being called")
-			}
-		})
+func TestPromiseCouldBeRejected(t *testing.T) {
+	expectedError := errors.New("hello world")
+
+	p := New()
+	p.Reject(expectedError)
+
+	select {
+	case <-p.Done():
+		v, err := p.Result()
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+		if v != nil {
+			t.Fatalf("unexpected promise result: %v", v)
+		}
+		if err != expectedError {
+			t.Logf("exp: %v", expectedError)
+			t.Logf("got: %v", err)
+			t.Fatalf("unexpected error")
+		}
+	default:
+		t.Fatalf("promise is not done after being rejected")
 	}
 }
 
 func TestPromiseCancelation(t *testing.T) {
-	pr := Execution(func() (interface{}, error) {
-		time.Sleep(time.Second)
-		return nil, nil
-	})
-	pr.Cancel()
-	if _, err := pr.Result(); err != context.Canceled {
-		t.Logf("exp: %T", context.Canceled)
-		t.Logf("got: %T", err)
-		t.Fatal("unexpected error type on cancel")
+	p := New()
+
+	if p.Canceled() {
+		t.Fatalf("promise is canceled after creation")
+	}
+
+	p.Cancel()
+
+	if !p.Canceled() {
+		t.Fatalf("promise was not canceled")
 	}
 }
 
-func TestPromiseResultWithContext(t *testing.T) {
+func TestPromiseResultWithContextIfContextCanceled(t *testing.T) {
+	p := New()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+
+	_, err := p.ResultWithContext(ctx)
+
+	if err != context.DeadlineExceeded {
+		t.Logf("exp: %v", context.DeadlineExceeded)
+		t.Logf("got: %v", err)
+		t.Fatalf("unexpected error")
+	}
+}
+
+func TestPromiseResultWithContextIfPromiseIsDone(t *testing.T) {
 	expectedValue := "hello world"
-	pr := Execution(func() (interface{}, error) {
+	p := New()
+
+	go func() {
 		time.Sleep(100 * time.Millisecond)
-		return expectedValue, nil
-	})
+		p.Resolve(expectedValue)
+	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+	v, err := p.ResultWithContext(context.Background())
 
-	v, err := pr.ResultWithContext(ctx)
 	if err != nil {
-		t.Fatalf("unexpected error: %[1]v (%[1]T)", err)
+		t.Fatalf("unexpected error %[1]v (%[1]T)", err)
 	}
 
-	s, ok := v.(string)
-	if !ok {
-		t.Logf("exp: string")
-		t.Logf("got: %T", v)
-		t.Fatalf("unexpected value type")
-	}
-	if expectedValue != s {
-		t.Logf("exp: %s", expectedValue)
-		t.Logf("got: %s", s)
-		t.Errorf("unexpected value")
+	if v.(string) != expectedValue {
+		t.Logf("exp: %v", expectedValue)
+		t.Logf("got: %v", v.(string))
+		t.Fatalf("unexpected promise value")
 	}
 }
 
-func TestPromiseResultWithContextContinueExecutionIfContextCanceled(t *testing.T) {
-	expectedValue := "hello world"
-	pr := Execution(func() (interface{}, error) {
-		time.Sleep(200 * time.Millisecond)
-		return expectedValue, nil
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	if _, err := pr.ResultWithContext(ctx); err != context.DeadlineExceeded {
-		t.Logf("exp: %T", context.Canceled)
-		t.Logf("got: %T", err)
-		t.Fatalf("unexpected error type on context timeout")
-	}
-
-	v, err := pr.Result()
-	if err != nil {
-		t.Fatalf("unexpected error: %[1]v (%[1]T)", err)
-	}
-
-	s, ok := v.(string)
-	if !ok {
-		t.Logf("exp: string")
-		t.Logf("got: %T", v)
-		t.Fatalf("unexpected value type")
-	}
-	if expectedValue != s {
-		t.Logf("exp: %s", expectedValue)
-		t.Logf("got: %s", s)
-		t.Errorf("unexpected value")
-	}
-}
-
-func TestDoubleResolveFromExecutor(t *testing.T) {
+func TestPromiseDoubleResolve(t *testing.T) {
 	expectedValue := "hello alice"
 	unexpectedValue := "hello bob"
 
-	ex := AsyncExecutorFunc(func(fn PromiseFunc, cb []Callback) *Promise {
-		pr := New(cb...)
-		go func() {
-			pr.Resolve(expectedValue)
-			pr.Resolve(unexpectedValue)
-		}()
-		return pr
-	})
+	p := New()
+	p.Resolve(expectedValue)
+	p.Resolve(unexpectedValue)
 
-	pr := ex.PromiseAsyncExecution(func() (interface{}, error) { return nil, nil })
-	v, err := pr.Result()
+	v, err := p.Result()
 	if err != nil {
-		t.Fatalf("unexpected error: %[1]v (%[1]T)", err)
+		t.Fatalf("unexpected error %[1]v (%[1]T)", err)
 	}
 
 	s, ok := v.(string)
@@ -192,6 +134,7 @@ func TestDoubleResolveFromExecutor(t *testing.T) {
 		t.Logf("got: %T", v)
 		t.Fatalf("unexpected value type")
 	}
+
 	if expectedValue != s {
 		t.Logf("exp: %s", expectedValue)
 		t.Logf("got: %s", s)
@@ -199,121 +142,20 @@ func TestDoubleResolveFromExecutor(t *testing.T) {
 	}
 }
 
-func TestDoubleRejectFromExecutor(t *testing.T) {
+func TestDoubleReject(t *testing.T) {
+	expectedError := errors.New("hello world")
 	unexpectedError := errors.New("unexpected error")
 
-	ex := AsyncExecutorFunc(func(fn PromiseFunc, cb []Callback) *Promise {
-		pr := New(cb...)
-		go func() {
-			pr.Reject(errExpected)
-			pr.Reject(unexpectedError)
-		}()
-		return pr
-	})
+	p := New()
+	p.Reject(expectedError)
+	p.Reject(unexpectedError)
 
-	pr := ex.PromiseAsyncExecution(func() (interface{}, error) { return nil, nil })
-
-	_, err := pr.Result()
+	_, err := p.Result()
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if errExpected != err {
-		t.Logf("exp: %v", errExpected)
-		t.Logf("got: %v", err)
-		t.Errorf("unexpected error")
-	}
-}
-
-func TestWhenAllOk(t *testing.T) {
-	expexted := []interface{}{
-		"hello",
-		"world",
-	}
-	p1 := Execution(func() (interface{}, error) {
-		time.Sleep(100 * time.Millisecond)
-		return "hello", nil
-	})
-	p2 := Execution(func() (interface{}, error) {
-		time.Sleep(200 * time.Millisecond)
-		return "world", nil
-	})
-
-	res, err := WhenAll(p1, p2).Result()
-	if err != nil {
-		t.Fatalf("unexpected error: %[1]v (%[1]T)", err)
-	}
-
-	s1, _ := json.Marshal(expexted)
-	s2, _ := json.Marshal(res)
-	if !bytes.Equal(s1, s2) {
-		t.Logf("exp: %s", s1)
-		t.Logf("got: %s", s2)
-		t.Errorf("unexpected result")
-	}
-}
-
-func TestWhenAllErr(t *testing.T) {
-	p1 := Execution(func() (interface{}, error) {
-		time.Sleep(100 * time.Millisecond)
-		return "", errExpected
-	})
-	p2 := Execution(func() (interface{}, error) {
-		time.Sleep(200 * time.Millisecond)
-		return "world", nil
-	})
-
-	_, err := WhenAll(p1, p2).Result()
-	if err == nil {
-		t.Fatalf("expected error, got nil")
-	}
-	if errExpected != err {
-		t.Logf("exp: %v", errExpected)
-		t.Logf("got: %v", err)
-		t.Errorf("unexpected error")
-	}
-}
-
-func TestWhenAnyOk(t *testing.T) {
-	expexted := "hello"
-	p1 := Execution(func() (interface{}, error) {
-		time.Sleep(100 * time.Millisecond)
-		return "", errExpected
-	})
-	p2 := Execution(func() (interface{}, error) {
-		time.Sleep(200 * time.Millisecond)
-		return expexted, nil
-	})
-
-	res, err := WhenAny(p1, p2).Result()
-	if err != nil {
-		t.Fatalf("unexpected error: %[1]v (%[1]T)", err)
-	}
-
-	s1, _ := json.Marshal(expexted)
-	s2, _ := json.Marshal(res)
-	if !bytes.Equal(s1, s2) {
-		t.Logf("exp: %s", s1)
-		t.Logf("got: %s", s2)
-		t.Errorf("unexpected result")
-	}
-}
-
-func TestWhenAnyErr(t *testing.T) {
-	p1 := Execution(func() (interface{}, error) {
-		time.Sleep(100 * time.Millisecond)
-		return "", errors.New("unexpected error")
-	})
-	p2 := Execution(func() (interface{}, error) {
-		time.Sleep(200 * time.Millisecond)
-		return "", errExpected
-	})
-
-	_, err := WhenAny(p1, p2).Result()
-	if err == nil {
-		t.Fatalf("expected error, got nil")
-	}
-	if errExpected != err {
-		t.Logf("exp: %v", errExpected)
+	if expectedError != err {
+		t.Logf("exp: %v", expectedError)
 		t.Logf("got: %v", err)
 		t.Errorf("unexpected error")
 	}
@@ -322,19 +164,16 @@ func TestWhenAnyErr(t *testing.T) {
 func TestCancelAll(t *testing.T) {
 	l := make([]*Promise, 5)
 	for i := range l {
-		l[i] = Execution(func() (interface{}, error) {
-			time.Sleep(time.Second)
-			return "", errors.New("unexpected error")
-		})
+		l[i] = New()
 	}
 
 	CancelAll(l...)
 
 	for i := range l {
-		if _, err := l[i].Result(); err != context.Canceled {
-			t.Logf("exp: %T", context.Canceled)
-			t.Logf("got: %T", err)
-			t.Error("unexpected error type on cancel")
+		if _, err := l[i].Result(); err != ErrCanceled {
+			t.Logf("exp: %[1]T %[1]v", ErrCanceled)
+			t.Logf("got: %[1]T %[1]v", err)
+			t.Error("unexpected error of canceled promise")
 		}
 	}
 }
