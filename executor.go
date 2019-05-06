@@ -55,6 +55,12 @@ func StartExecutor(concurrency int, maxPendingPromises int) *Executor {
 	return e
 }
 
+// Cap return the maximum amount of promises this Executor can handle
+// until it blocks
+func (e *Executor) Cap() int {
+	return cap(e.promCh)
+}
+
 func (e *Executor) Stop() {
 	select {
 	case <-e.stopCh:
