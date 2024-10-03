@@ -163,7 +163,17 @@ func (r *Runner) Wait() {
 	}
 }
 
-func Async[T any](r *Runner, impl func() (T, error)) *Promise[T] {
+var DefaultRunner = NewRunner(DefaultRunnerConcurrency, DefaultRunnerCapacity)
+
+func Async[T any](impl func() (T, error)) *Promise[T] {
+	return AsyncOnRunner(DefaultRunner, impl)
+}
+
+func Wait() {
+	DefaultRunner.Wait()
+}
+
+func AsyncOnRunner[T any](r *Runner, impl func() (T, error)) *Promise[T] {
 	promise := NewPromise[T]()
 	item := execPromise{
 		promise: promise,
